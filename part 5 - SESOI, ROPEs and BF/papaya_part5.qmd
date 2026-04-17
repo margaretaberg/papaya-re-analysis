@@ -1,0 +1,719 @@
+---
+title: "Buddy Challenge Part 5"
+format: 
+  pdf: 
+    papersize: a4
+    pdf-standard: ua-2
+    geometry:
+      - top=20mm
+      - left=20mm
+      - heightrounded
+    mainfont: Times New Roman
+    sansfont: Times New Roman
+    include-in-header: 
+       text: |
+         \usepackage{fvextra}
+         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+         \DefineVerbatimEnvironment{OutputCode}{Verbatim}{breaklines,commandchars=\\\{\}}
+author: 
+  - name: Margareta Berg
+  - name: Alexandra Bogoyavlenskaya
+  - name: Andrea Eide
+  - name: Molle Elise Lewis
+  - name: Hågard Meyer
+editor: visual
+date: 2026-03-27
+execute:
+  eval: false
+  error: false
+  warning: false
+  message: false
+  cache: false
+---
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+#loading packages
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayestestR, lme4, dplyr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+### Loading the data and labeling
+
+```{r}
+#| label: data
+
+#loading in the data
+data <- read.csv('file_with_data_without_outliers_accuracies.csv')
+
+#labeling factors
+data$flanker_condition <- factor(data$flanker_condition,
+labels=c("unrelated","relatedn-3", "relatedn-2", "relatedn-1", "relatedn+1", "relatedn+2", "relatedn+3"))
+
+data$flanker_condition <- relevel(data$flanker_condition, ref="unrelated")
+
+
+```
+
+### Setting our model formula
+
+```{r}
+#| label: model formula
+
+#Model formula
+model_formula <- bf(correct_keyboard_response ~ flanker_condition + 
+                      (1+flanker_condition|Participant_unique_ID) +
+                      (1+flanker_condition|target))
+
+
+```
+
+### Setting priors
+
+```{r}
+#| label: setting priors
+
+# get priors
+get_prior(model_formula, data)
+
+# Specifying priors
+my_priors <- c(prior(normal(0, 1), class = 'Intercept'),
+               prior(normal(0, 1), class = 'b'))     
+
+
+
+```
+
+### Running model the model
+
+```{r}
+#| label: running model
+
+# Run model
+model_weak <- brm(correct_keyboard_response ~ flanker_condition
+                  + (1+flanker_condition|Participant_unique_ID) 
+                  + (1+flanker_condition|target),
+                  family = bernoulli(link = "logit"),
+                  prior = my_priors,
+                  data = data,
+                  chains = 4,
+                  cores = 4, 
+                  iter = 2000,
+                  warmup = 1000,
+                  thin = 1,
+                  seed = 123)
+
+summary(model_weak)
+
+```
+
+### Defining SESOI
+
+We did a literature search to define the SESOI for accuracy measurements. Unfortunately, we were not able to find any suitable previous research to justify our choice. The most relevant literature we were able to find was research on the psychometric function, where the rate for stimulus-independent errors in trained observers was found to be between 0% and 5% \[\@wichmann2001psychometric\]. Thus, we decided the smalles effect size of interest to be a difference of 5% in probability space, formalizing our ROPE as -5% to 5% from point 0 (converted to log odds). As we did not find literature to confidently define our SESOI, we also want to investigate the smallest measurable change, meaning change in one trial. This corresponds to 0.005%.
+
+```{r}
+#| label: rope
+
+# define ROPE - wide rope of 5%
+rope <- c(qlogis(0.45),qlogis(0.55))
+
+
+# defining a smaller rope of 0.005%(0.0045%), equivalent to one trial change
+rope_small <- c(qlogis(0.49995),qlogis(0.50005))
+
+```
+
+Bayes factor 5%
+
+```{r}
+#| label: BF-5
+
+BF_5_M3 <- 
+  bayesfactor_rope(posterior = model_weak,
+                   null = rope,
+                   parameter = "b_flanker_conditionrelatednM3")
+
+BF_5_M3
+# 0.028
+
+BF_5_M2 <- 
+  bayesfactor_rope(posterior = model_weak,
+                   null = rope,
+                   parameter = "b_flanker_conditionrelatednM2")
+
+BF_5_M2
+# 0.152
+
+BF_5_M1 <- 
+  bayesfactor_rope(posterior = model_weak,
+                   null = rope,
+                   parameter = "b_flanker_conditionrelatednM1")
+
+BF_5_M1
+# 0.098
+
+BF_5_P3 <- 
+  bayesfactor_rope(posterior = model_weak,
+                   null = rope,
+                   parameter = "b_flanker_conditionrelatednP3")
+
+BF_5_P3
+# 0.014
+
+BF_5_P2 <- 
+  bayesfactor_rope(posterior = model_weak,
+                   null = rope,
+                   parameter = "b_flanker_conditionrelatednP2")
+
+BF_5_P2
+# 0.054
+
+BF_5_P1 <- 
+  bayesfactor_rope(posterior = model_weak,
+                   null = rope,
+                   parameter = "b_flanker_conditionrelatednP1")
+
+BF_5_P1
+# 0.066
+
+```
+
+Running sensitivity analysis for different priors
+
+```{r}
+#| label: prior-test
+
+#setting prior for intercept
+priors <- c(prior(normal(0, 1), class = 'Intercept'))     
+
+
+# defining more priors
+priors_0.5 <- c(priors, 
+              prior(normal(0, 0.5), class = b))
+priors_0.75 <- c(priors, 
+              prior(normal(0, 0.75), class = b))
+priors_1 <- c(priors, 
+              prior(normal(0, 1), class = b))
+priors_1.25 <- c(priors, 
+              prior(normal(0, 1.25), class = b))
+priors_1.5 <- c(priors, 
+              prior(normal(0, 1.5), class = b))
+
+# Defining a list of these prior specifications
+prior_list <- list(priors_0.5,
+                   priors_0.75,
+                   priors_1,
+                   priors_1.25,
+                   priors_1.5
+)
+
+
+# Initialize a list to store models
+model_list <- list()
+
+# Loop over the priors
+# for (i in seq_along(prior_list)) {
+ #   model_list[[i]] <-
+  #    brm(
+  #     formula = model_formula,
+  #      data = data,
+  #      prior = prior_list[[i]],
+  #      # common sampling specifications
+  #      seed = 123,
+  #      iter = 4000,
+  #      chains = 4,
+  #      cores = 4,
+  #      backend = "cmdstanr"
+  #    )
+  #  }
+ 
+ # name models
+names(model_list) <- paste0("model_with_priors", c(0.5, 0.75, 1, 1.25, 1.5))
+```
+
+```{r}
+#| label: save-model
+
+# saveRDS(model_list, "model_priors.RDS")
+model_list_all <- readRDS("model_priors.RDS")
+
+
+```
+
+Loop through different ROPEs
+
+```{r loop-through-ropes}
+
+# specify different rope intervals
+ropes <- list(c(qlogis(0.45),qlogis(0.55)),
+              c(qlogis(0.47),qlogis(0.53)),
+              c(qlogis(0.49),qlogis(0.51)),
+              c(qlogis(0.49995),qlogis(0.50005)))
+
+
+
+# m1
+results <- map_dfr(names(model_list_all), function(model_name) {
+  model <- model_list_all[[model_name]]
+  
+  map_dfr(ropes, function(interval) {
+    lower <- interval[1]
+    upper <- interval[2]
+    
+    bayesfactor_parameters(
+      model,
+      null = c(lower, upper),
+      parameter = "b_flanker_conditionrelatednM1"
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        model = model_name,
+        interval_range = paste0("[", lower, ", ", upper, "]")
+      ) %>%
+      select(model, everything())
+  })
+})
+
+
+# wrangle
+results_m1 <- results |> 
+  filter(Parameter == "b_flanker_conditionrelatednM1") |> 
+ # separate(model, sep = "_", into = c(NA, NA, NA, NA, "prior_sd")) |> 
+  mutate(BF = exp(log_BF)) |> 
+  mutate_if(is.numeric, round, digits = 3)|> 
+  select(model, BF, interval_range)
+
+
+
+#m3
+results_m3 <- map_dfr(names(model_list_all), function(model_name) {
+  model <- model_list_all[[model_name]]
+  
+  map_dfr(ropes, function(interval) {
+    lower <- interval[1]
+    upper <- interval[2]
+    
+    bayesfactor_parameters(
+      model,
+      null = c(lower, upper),
+      parameter = "b_flanker_conditionrelatednM3"
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        model = model_name,
+        interval_range = paste0("[", lower, ", ", upper, "]")
+      ) %>%
+      select(model, everything())
+  })
+})
+
+
+# wrangle
+results_m3 <- results_m3 |> 
+  filter(Parameter == "b_flanker_conditionrelatednM3") |> 
+ # separate(model, sep = "_", into = c(NA, NA, NA, NA, "prior_sd")) |> 
+  mutate(BF = exp(log_BF)) |> 
+ # mutate_if(is.numeric, round, digits = 3)|> 
+  select(model, BF, interval_range)
+
+
+
+#m2
+results_m2_1 <- map_dfr(names(model_list_all), function(model_name) {
+  model <- model_list_all[[model_name]]
+  
+  map_dfr(ropes, function(interval) {
+    lower <- interval[1]
+    upper <- interval[2]
+    
+    bayesfactor_parameters(
+      model,
+      null = c(lower, upper),
+      parameter = "b_flanker_conditionrelatednM2"
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        model = model_name,
+        interval_range = paste0("[", lower, ", ", upper, "]")
+      ) %>%
+      select(model, everything())
+  })
+})
+
+
+# wrangle
+results_m2 <- results_m2_1 |> 
+  filter(Parameter == "b_flanker_conditionrelatednM2") |> 
+ # separate(model, sep = "_", into = c(NA, NA, NA, NA, "prior_sd")) |> 
+  mutate(BF = exp(log_BF)) |> 
+  mutate_if(is.numeric, round, digits = 3)|> 
+  select(model, BF, interval_range)
+
+
+#p1
+results_p1_1 <- map_dfr(names(model_list_all), function(model_name) {
+  model <- model_list_all[[model_name]]
+  
+  map_dfr(ropes, function(interval) {
+    lower <- interval[1]
+    upper <- interval[2]
+    
+    bayesfactor_parameters(
+      model,
+      null = c(lower, upper),
+      parameter = "b_flanker_conditionrelatednP1"
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        model = model_name,
+        interval_range = paste0("[", lower, ", ", upper, "]")
+      ) %>%
+      select(model, everything())
+  })
+})
+
+
+# wrangle
+results_p1 <- results_p1_1 |> 
+  filter(Parameter == "b_flanker_conditionrelatednP1") |> 
+ # separate(model, sep = "_", into = c(NA, NA, NA, NA, "prior_sd")) |> 
+ mutate(BF = exp(log_BF)) |> 
+  mutate_if(is.numeric, round, digits = 3)|> 
+  select(model, BF, interval_range)
+
+
+#p2
+results_p2 <- map_dfr(names(model_list_all), function(model_name) {
+  model <- model_list_all[[model_name]]
+  
+  map_dfr(ropes, function(interval) {
+    lower <- interval[1]
+    upper <- interval[2]
+    
+    bayesfactor_parameters(
+      model,
+      null = c(lower, upper),
+      parameter = "b_flanker_conditionrelatednP2"
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        model = model_name,
+        interval_range = paste0("[", lower, ", ", upper, "]")
+      ) %>%
+      select(model, everything())
+  })
+})
+
+
+# wrangle
+results_p2 <- results_p2 |> 
+  filter(Parameter == "b_flanker_conditionrelatednP2") |> 
+ # separate(model, sep = "_", into = c(NA, NA, NA, NA, "prior_sd")) |> 
+  mutate(BF = exp(log_BF)) |> 
+  mutate_if(is.numeric, round, digits = 3)|> 
+  select(model, BF, interval_range)
+
+
+#p3
+results_p3_1 <- map_dfr(names(model_list_all), function(model_name) {
+  model <- model_list_all[[model_name]]
+  
+  map_dfr(ropes, function(interval) {
+    lower <- interval[1]
+    upper <- interval[2]
+    
+    bayesfactor_parameters(
+      model,
+      null = c(lower, upper),
+      parameter = "b_flanker_conditionrelatednP3"
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        model = model_name,
+        interval_range = paste0("[", lower, ", ", upper, "]")
+      ) %>%
+      select(model, everything())
+  })
+})
+
+
+# wrangle
+results_p3 <- results_p3_1 |> 
+  filter(Parameter == "b_flanker_conditionrelatednP3") |> 
+ # separate(model, sep = "_", into = c(NA, NA, NA, NA, "prior_sd")) |> 
+  mutate(BF = exp(log_BF)) |> 
+  mutate_if(is.numeric, round, digits = 3)|> 
+  select(model, BF, interval_range)
+
+```
+
+Figures - Bayes factor in favor of alternative
+
+```{r}
+#| label: visualize-m3
+
+# plot m3
+
+m3 <- ggplot(results_m3,
+       aes(x = as.factor(model),
+           y = as.factor(interval_range),
+           fill = BF)) +
+  geom_tile(colour = "grey") +
+  geom_text(aes(label = round(BF,3))) +
+  scale_fill_gradient2(transform = "log",
+                       limits = c(0.1,10),
+                       midpoint = 1, 
+                       low = "#5C7457", 
+                       high = "#FA8100",
+                       breaks = c(0.00000,0.03,0.1,0.33,0,3,10),
+                       labels = c("0","0.03","0.1","0.33","1","3","10"),
+                       oob = scales::squish
+                       ) +
+  scale_y_discrete(labels = c("-0.0002, 0.0002", "-0.04, 0.04", "-0.12, 0.12", "-0.2, 0.2")) + 
+  scale_x_discrete(labels = c("0.5", "0.75", "1", "1.25", "1.5")) + 
+  labs(title = "1. Bayes factor in favour of null", 
+       subtitle = "Flanker condition M3",
+       fill = "BF",
+       y = "ROPEs \n ",
+       x = "\nPrior standard deviation") +
+  theme_minimal()
+
+print(m3)
+
+```
+
+![](m3.png)
+
+```{r}
+#| label: visualize-m2
+# plot m2
+
+m2 <- ggplot(results_m2,
+       aes(x = as.factor(model),
+           y = as.factor(interval_range),
+           fill = BF)) +
+  geom_tile(colour = "grey") +
+  geom_text(aes(label = round(BF,3))) +
+  scale_fill_gradient2(transform = "log",
+                       limits = c(0.1,10),
+                       midpoint = 1, 
+                       low = "#5C7457", 
+                       high = "#FA8100",
+                       breaks = c(0.00000,0.03,0.1,0.33,0,3,10),
+                       labels = c("0","0.03","0.1","0.33","1","3","10"),
+                       oob = scales::squish
+                       ) +
+  scale_y_discrete(labels = c("-0.0002, 0.0002", "-0.04, 0.04", "-0.12, 0.12", "-0.2, 0.2")) + 
+  scale_x_discrete(labels = c("0.5", "0.75", "1", "1.25", "1.5")) + 
+  labs(title = "2. Bayes factor in favour of null", 
+       subtitle = "Flanker condition M2",
+       fill = "BF",
+       y = "ROPEs \n ",
+       x = "\nPrior standard deviation") +
+  theme_minimal()
+
+print(m2)
+
+```
+
+![](m2.png)
+
+```{r}
+#| label: visualize-m1
+# plot m1
+
+m1 <- ggplot(results_m1,
+       aes(x = as.factor(model),
+           y = as.factor(interval_range),
+           fill = BF)) +
+  geom_tile(colour = "grey") +
+  geom_text(aes(label = round(BF,3))) +
+  scale_fill_gradient2(transform = "log",
+                       limits = c(0.1,10),
+                       midpoint = 1, 
+                       low = "#5C7457", 
+                       high = "#FA8100",
+                       breaks = c(0.00000,0.03,0.1,0.33,0,3,10),
+                       labels = c("0","0.03","0.1","0.33","1","3","10"),
+                       oob = scales::squish
+                       ) +
+  scale_y_discrete(labels = c("-0.0002, 0.0002", "-0.04, 0.04", "-0.12, 0.12", "-0.2, 0.2")) + 
+  scale_x_discrete(labels = c("0.5", "0.75", "1", "1.25", "1.5")) + 
+  labs(title = "3. Bayes factor in favour of null", 
+       subtitle = "Flanker condition M1",
+       fill = "BF",
+       y = "ROPEs \n ",
+       x = "\nPrior standard deviation") +
+  theme_minimal()
+print(m1)
+
+```
+
+![](m1.png)
+
+```{r}
+#| label: visualize-p1
+# plot p1
+
+p1 <- ggplot(results_p1,
+       aes(x = as.factor(model),
+           y = as.factor(interval_range),
+           fill = BF)) +
+  geom_tile(colour = "grey") +
+  geom_text(aes(label = round(BF,3))) +
+  scale_fill_gradient2(transform = "log",
+                       limits = c(0.1,10),
+                       midpoint = 1, 
+                       low = "#5C7457", 
+                       high = "#FA8100",
+                       breaks = c(0.00000,0.03,0.1,0.33,0,3,10),
+                       labels = c("0","0.03","0.1","0.33","1","3","10"),
+                       oob = scales::squish
+                       ) +
+  scale_y_discrete(labels = c("-0.0002, 0.0002", "-0.04, 0.04", "-0.12, 0.12", "-0.2, 0.2")) + 
+  scale_x_discrete(labels = c("0.5", "0.75", "1", "1.25", "1.5")) + 
+  labs(title = "4. Bayes factor in favour of null", 
+       subtitle = "Flanker condition P1",
+       fill = "BF",
+       y = "ROPEs \n ",
+       x = "\nPrior standard deviation") +
+  theme_minimal()
+print(p1)
+
+```
+
+![](p1.png)
+
+```{r}
+#| label: visualize-p2
+# plot p2
+
+p2 <- ggplot(results_p2,
+       aes(x = as.factor(model),
+           y = as.factor(interval_range),
+           fill = BF)) +
+  geom_tile(colour = "grey") +
+  geom_text(aes(label = round(BF,3))) +
+  scale_fill_gradient2(transform = "log",
+                       limits = c(0.1,10),
+                       midpoint = 1, 
+                       low = "#5C7457", 
+                       high = "#FA8100",
+                       breaks = c(0.00000,0.03,0.1,0.33,0,3,10),
+                       labels = c("0","0.03","0.1","0.33","1","3","10"),
+                       oob = scales::squish
+                       ) +
+  scale_y_discrete(labels = c("-0.0002, 0.0002", "-0.04, 0.04", "-0.12, 0.12", "-0.2, 0.2")) + 
+  scale_x_discrete(labels = c("0.5", "0.75", "1", "1.25", "1.5")) + 
+  labs(title = "5. Bayes factor in favour of null", 
+       subtitle = "Flanker condition P2",
+       fill = "BF",
+       y = "ROPEs \n ",
+       x = "\nPrior standard deviation") +
+  theme_minimal()
+
+print(p2)
+
+```
+
+![](p2.png)
+
+```{r}
+#| label: visualize-p3
+# plot p3
+
+p3 <- ggplot(results_p3,
+       aes(x = as.factor(model),
+           y = as.factor(interval_range),
+           fill = BF)) +
+  geom_tile(colour = "grey") +
+  geom_text(aes(label = round(BF,3))) +
+  scale_fill_gradient2(transform = "log",
+                       limits = c(0.1,10),
+                       midpoint = 1, 
+                       low = "#5C7457", 
+                       high = "#FA8100",
+                       breaks = c(0.00000,0.03,0.1,0.33,0,3,10),
+                       labels = c("0","0.03","0.1","0.33","1","3","10"),
+                       oob = scales::squish
+                       ) +
+  scale_y_discrete(labels = c("-0.0002, 0.0002", "-0.04, 0.04", "-0.12, 0.12", "-0.2, 0.2")) + 
+  scale_x_discrete(labels = c("0.5", "0.75", "1", "1.25", "1.5")) + 
+  labs(title = "6. Bayes factor in favour of null", 
+       subtitle = "Flanker condition P3",
+       fill = "BF",
+       y = "ROPEs \n ",
+       x = "\nPrior standard deviation") +
+  theme_minimal()
+
+print(p3)
+
+
+```
+
+![](p3.png)
+
+## Write up
+
+The data were modeled using a mixed-effect model predicting accuracy by flanker condition (the placement of the target word) and includes by-subject random slopes (n = 98) and by-target random slopes (n = x). The model was fit using brms (Bürkner, 2018) in R (R Core Team, 2025). We used default priors, estimated from the data by brms, and specified weakly informative priors for the accuracy (normal, mean = 0, sd = 1), and specified reasonably weakly informative priors for the predictor of interest: flanker conditions (normal, mean = 0, sd = \[0.25, 0.5, 1, 1.25, 1.5\]). We fit this model with four chains of sampling for the estimation of the joint posterior distribution, and 4000 iterations with 2000 for warm-up per chain. 
+
+Using the Bayesian framework, we seek to evaluate the evidence for a meaningful effect of flanker condition on accuracy based on the data against the background of our model and chosen priors. We define a region of practical equivalence (ROPE) that represents a reasonable change in accuracy around zero that we consider to not be meaningful (Kruschke, 2018). We decided the smallest effect size of interest to be a difference of 5% in probability space, formalizing our ROPE as -5% to 5% from point 0 (converted to log odds). We assumed ROPE intervals centered on zero from the smallest possible change (change in accuracy in one trial), 0.005% to 5%, with two middle intervals of 1% and 3%. 
+
+From this, we consider each pair of ROPE and prior. The overall conclusion from the sensitivity analysis is that there is extreme evidence for the null hypothesis. See Figures 1-6. With the most narrow ROPE, the evidence for H0 is between strong (below 0.1), very strong (below 0.03) and extreme (below 0.01). The wider the prior the lower the Bayes factors. By exploring a variety of prior choices, the conclusion does not change. We are still finding that flanker condition has no effect on accuracy. 
+
+## References
+
+\@article{wichmann2001psychometric,\
+title={The psychometric function: I. Fitting, sampling, and goodness of fit}, author={Wichmann, Felix A and Hill, N Jeremy}, journal={Perception & psychophysics},\
+volume={63},\
+number={8},\
+pages={1293\--1313},\
+year={2001},\
+publisher={Springer} }
+
+\@article{kruschke2018rejecting,\
+title={Rejecting or accepting parameter values in Bayesian estimation},\
+author={Kruschke, John K},\
+journal={Advances in methods and practices in psychological science},\
+volume={1},\
+number={2},\
+pages={270--280},\
+year={2018},\
+publisher={Sage Publications Sage CA: Los Angeles, CA} }
+
+\@misc{RN305,\
+author = {R Core Team},\
+title = {R: A Language and Environment for Statistical Computing},\
+publisher = {R Foundation for Statistical Computing},\
+url = {https://www.R-project.org/},\
+year = {2023},\
+type = {Generic} }
+
+\@article{RJ-2018-017,\
+author = {Bürkner, Paul-Christian},\
+title = {Advanced Bayesian Multilevel Modeling with the R Package brms},\
+journal = {The R Journal},\
+year = {2018},\
+note = {https://doi.org/10.32614/RJ-2018-017},\
+doi = {10.32614/RJ-2018-017},\
+volume = {10},\
+issue = {1},\
+issn = {2073-4859},\
+pages = {395-411} }
+
+\@article{roettgermeaningful,\
+title={Meaningful results for meaningful hypotheses: A tutorial on hypothesis testing with Bayes factors using ROPEs},\
+author={Roettger, Timo and Franke, Michael},\
+publisher={OSF} }
